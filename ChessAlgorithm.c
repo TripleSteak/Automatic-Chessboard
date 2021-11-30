@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <math.h>
 
 #define BOARD_SIZE 10
 #define BOARD_START 1
@@ -51,12 +52,12 @@ const struct piece black_queen_p = {queen, black, 'Q'};
 // verbal replacements for letters (because b and d are confusing)
 const char *a_code = "apple";
 const char *b_code = "banana";
-const char *c_code = "carrot";
+const char *c_code = "cash";
 const char *d_code = "donut";
 const char *e_code = "eggplant";
-const char *f_code = "fig";
-const char *g_code = "grape";
-const char *h_code = "honey";
+const char *f_code = "falafel";
+const char *g_code = "garlic";
+const char *h_code = "hazelnut";
 
 // where are the kings (0-8)?
 int kingRow [2];
@@ -83,6 +84,7 @@ int movesTillDraw = 100;
 // game variables
 int turn; // whose turn is it? white/black
 bool running; // whether the game is running
+bool is_running() { return running; }
 
 /*
 * Collection of functions for storing and retrieving motor/magnet commands
@@ -92,6 +94,7 @@ int x_motor_axis = 1;
 int y_motor_axis = 2;
 int both_motor_axis = 3;
 
+float motor_overflow = 0.45f; // how much further to go than the required distance, to "center the piece"
 
 struct next_command {
     int command_type; // 0 -- magnet toggle, 1 -- double motor axis, 2 -- single motor axis, 3 -- both motors at once
@@ -123,7 +126,6 @@ int get_int_command_value() { // also discards
 
 float get_float_command_value_a() {
     float value = command_queue[0].f1;
-    printf("HEEFWSF %f", value);
     return value;
 }
 
@@ -135,13 +137,42 @@ float get_float_command_value_b() { // also discards
 
 void queue_command(int type, int i1, float f1, float f2) { // adds to queue
     if(num_commands >= 24) return;
-
+    printf("%f %f\n", f1, f2);
     struct next_command q_command = {type, i1, f1, f2};
     command_queue[num_commands] = q_command;
     num_commands++;
 }
 
+/*
+* narration tools
+*/
+char *narration; // message to say
+void set_tts(char *text) { narration = text; } // set the narration
+
+char *get_tts() {
+    if(narration == NULL) return "";
+    char *returnValue = narration;
+    narration = NULL;
+    return returnValue;
+}
+
+void print_tts_message(char *message) {
+    narration = message;
+    printf("[MESSAGE] %s\n", message);
+}
+
+char promote_letter = 'q'; // if promotion happens, use this (default queen)
+
 struct piece *board [BOARD_SIZE][BOARD_SIZE]; // row-first -> in chess notation, [A-H][1-8]
+struct piece *board_clone [BOARD_SIZE][BOARD_SIZE];
+
+void clone_board() { // used for motor pathfinding, since the virtual board will be updated but not the actual board
+    for(int i = 0; i < BOARD_SIZE; i++) {
+        for(int j = 0; j < BOARD_SIZE; j++) {
+            board_clone[i][j] = board[i][j];
+        }
+    }
+}
 
 int other_colour(int colour) { return colour == white ? black : white; }
 bool piece_equal(struct piece *a, const struct piece *b) { return a->piece_id == b->piece_id && a->colour == b->colour; }
@@ -221,19 +252,28 @@ char print_piece(struct piece *p, bool onBoard) {
 
 // for debugging algorithm, not relevant in final program
 void print_board() {
-    printf("\n");
+    printf("[BOARD]\n");
     for(int i = BOARD_SIZE - 1; i >= 0; i--) {
+        printf("[BOARD]     ");
         for(int j = 0; j < BOARD_SIZE; j++) printf("%c ", print_piece(board[i][j], i >= BOARD_START && i < BOARD_START + 8 && j >= BOARD_START && j < BOARD_START + 8));
         printf("\n");
     }
-    printf("\n");
+    printf("[BOARD]\n");
+}
+
+void print_clone_board() {
+    for(int i = BOARD_SIZE - 1; i >= 0; i--) {
+        printf("[CLONE]     ");
+        for(int j = 0; j < BOARD_SIZE; j++) printf("%c ", print_piece(board_clone[i][j], i >= BOARD_START && i < BOARD_START + 8 && j >= BOARD_START && j < BOARD_START + 8));
+        printf("\n");
+    }
 }
 
 // returns the first empty spot on the chess board (useful for deciding where to put captured pieces)
 // "white" determines if we start searching for positions from white's side
 int first_empty_spot(bool white) {
     for(int row = 0; row < BOARD_SIZE; row++) for(int col = 0; col < BOARD_SIZE; col++) {
-        printf("piece at (%d, %d) is %d\n", white ? row : BOARD_SIZE - row - 1, col, board[white ? row : BOARD_SIZE - row - 1][col]->piece_id);
+        //printf("piece at (%d, %d) is %d\n", white ? row : BOARD_SIZE - row - 1, col, board[white ? row : BOARD_SIZE - row - 1][col]->piece_id);
         if(piece_equal(board[white ? row : BOARD_SIZE - row - 1][col], &null)) return (white ? row : BOARD_SIZE - row - 1) * BOARD_SIZE + col; // allows the position to be returned as one integer
     }
 }
@@ -251,7 +291,8 @@ void understand(char *parsed, char *input) {
     }
 
     //strcpy(parsed, input);
-    char *pieceToMove = strstr(input, "pawn"); // point to the keyword that represents the first piece mentioned in the input
+    char *pieceToMove = min_pointer(strstr(input, "pawn"), strstr(input, "pine"));
+    pieceToMove = min_pointer(strstr(input, "pond"), pieceToMove); // point to the keyword that represents the first piece mentioned in the input
     pieceToMove = min_pointer(strstr(input, "night"), pieceToMove);
     pieceToMove = min_pointer(strstr(input, "horse"), pieceToMove);
     pieceToMove = min_pointer(strstr(input, "bishop"), pieceToMove);
@@ -299,6 +340,13 @@ void understand(char *parsed, char *input) {
             newParsed[4] = numberIndexCnt > 1 ? numberIndices[1] + '0' : numberIndices[0] + '0';
             newParsed[5] = '\0';
             strcpy(parsed, newParsed);
+
+            if(newParsed[0] == 'p') { // change promotion piece
+                if(strstr(input, "queen") != NULL) promote_letter = 'q';
+                else if(strstr(input, "rook") != NULL) promote_letter = 'r';
+                else if(strstr(input, "bishop") != NULL) promote_letter = 'b';
+                else if(strstr(input, "night") != NULL || strstr(input, "horse") != NULL) promote_letter = 'n';
+            }
         } else strcpy(parsed, "");
     } else strcpy(parsed, "");
 }
@@ -312,7 +360,7 @@ bool validate_input(char *input) {
     bool flag;
     if(strlen(input) < 5) flag = false;
     else flag = is_piece_letter(input[0]) && is_rank(input[1]) && is_file(input[2]) && is_rank(input[3]) && is_file(input[4]);
-    if(!flag) printf("Invalid input. Try again. ");
+    if(!flag) print_tts_message("Invalid input. Try again. ");
     return flag;
 }
 
@@ -415,7 +463,7 @@ bool legal_castle_queenside(int colour) {
             if(piece_equal(board[BOARD_START + targetFile][BOARD_START + 1], &null) && piece_equal(board[BOARD_START + targetFile][BOARD_START + 2], &null) && piece_equal(board[BOARD_START + targetFile][BOARD_START + 3], &null)) return true; // no obstructing pieces
         }
     }
-    printf("Can't castle now.\n");
+    print_tts_message("Can't castle now.\n");
     return false; // obstructing pieces
 }
 
@@ -426,7 +474,7 @@ bool legal_castle_kingside(int colour) {
             if(piece_equal(board[BOARD_START + targetFile][BOARD_START + 5], &null) && piece_equal(board[BOARD_START + targetFile][BOARD_START + 6], &null)) return true; // no obstructing pieces
         }
     }
-    printf("Can't castle now.\n");
+    print_tts_message("Can't castle now.\n");
     return false; // obstructing pieces
 }
 
@@ -502,52 +550,346 @@ bool has_valid_move(int colour) {
     return moveAvailable;
 }
 
-// motor will move the given distance ACROSS rows
+// motor will move the given distance ACROSS rows (UNUSED)
 void motor_move_row(float delta) {
     motorRow += delta;
     queue_command(x_motor_axis, 0, 0, delta);
-    printf("   $MOTOR$ moved in Y: %f tiles\n", delta);
+    printf("[DEBUG] $MOTOR$ moved in Y: %f tiles\n", delta);
 }
 
-// motor will move the given distance ALONG rows
+// motor will move the given distance ALONG rows (UNUSED)
 void motor_move_col(float delta) {
     motorCol += delta;
     queue_command(y_motor_axis, 0, 0, delta);
-    printf("   $MOTOR$ moved in X: %f tiles\n", delta);
+    printf("[DEBUG] $MOTOR$ moved in X: %f tiles\n", delta);
 }
 
-void motor_move_both(float deltaX, float deltaY) {
+void motor_move_both(float deltaX, float deltaY, bool withOverflow) {
     motorRow += deltaX;
     motorCol += deltaY;
-    queue_command(both_motor_axis, 0, deltaX, deltaY);
-    printf("   $MOTOR$ moved in two axes: %f, %f tiles\n", deltaX, deltaY);
+
+    /*if(withOverflow) {
+    float distNoOverflow = sqrt(deltaX * deltaX + deltaY * deltaY);
+    float overflowPercent = (distNoOverflow + motor_overflow) / distNoOverflow - 1.0f; // should be a low percentage (0 - 30%)?
+
+    float motorOverflowX = overflowPercent * deltaX;
+    float motorOverflowY = overflowPercent * deltaY;
+    queue_command(both_motor_axis, 0, deltaX + motorOverflowX, deltaY + motorOverflowY);
+    queue_command(both_motor_axis, 0, -motorOverflowX, -motorOverflowY);
+    //printf("%f %f\n", (deltaX + motorOverflowX), (deltaY + motorOverflowY));
+
+    } elseI*/ queue_command(both_motor_axis, 0, deltaX, deltaY);
+
+    printf("[DEBUG] $MOTOR$ moved in two axes: %f, %f tiles\n", deltaX, deltaY);
 }
 
 // turns the magnet on/off
 void toggle_magnet(bool state) {
     int toggle = state ? 1 : 0;
     queue_command(magnet_toggle, toggle, 0, 0);
-    printf(state ? "   $MAGNET$: ON\n" : "   $MAGNET$: OFF\n");
+    printf(state ? "[DEBUG] $MAGNET$: ON\n" : "[DEBUG] $MAGNET$: OFF\n");
+}
+
+// figure out all the tiles that can be reached from this tile
+void initial_spread(int *array, int startRow, int startCol) {
+    if(startRow < 0 || startCol < 0 || startRow >= BOARD_SIZE || startCol >= BOARD_SIZE) return; // out of bounds
+    if(array[startRow * BOARD_SIZE + startCol] != 0) return; // already checked
+
+    array[startRow * BOARD_SIZE + startCol] = 1;
+    // check traversable tiles
+    if(startRow > 0 && piece_equal(board_clone[startRow - 1][startCol], &null)) initial_spread(array, startRow - 1, startCol);
+    if(startRow < BOARD_SIZE - 1 && piece_equal(board_clone[startRow + 1][startCol], &null)) initial_spread(array, startRow + 1, startCol);
+    if(startCol > 0 && piece_equal(board_clone[startRow][startCol - 1], &null)) initial_spread(array, startRow, startCol - 1);
+    if(startCol < BOARD_SIZE - 1 && piece_equal(board_clone[startRow][startCol + 1], &null)) initial_spread(array, startRow, startCol + 1);
+}
+
+// spreads the juice of this tile (denoted by n) to all adjacent empty tiles
+// avoidRow and avoidCol represent the starting piece, which must be kept at 0
+void spread_juice(int *array, int startRow, int startCol, int n) {
+    if(startRow < 0 || startCol < 0 || startRow >= BOARD_SIZE || startCol >= BOARD_SIZE) return; // out of bounds
+    if(array[startRow * BOARD_SIZE + startCol] != 0) return; // already visited
+
+    array[startRow * BOARD_SIZE + startCol] = n; // this tile can be reached from the original start tile, so n remains constant
+
+    if(startRow > 0 && piece_equal(board_clone[startRow - 1][startCol], &null)) spread_juice(array, startRow - 1, startCol, n);
+    if(startRow < BOARD_SIZE - 1 && piece_equal(board_clone[startRow + 1][startCol], &null)) spread_juice(array, startRow + 1, startCol, n);
+    if(startCol > 0 && piece_equal(board_clone[startRow][startCol - 1], &null)) spread_juice(array, startRow, startCol - 1, n);
+    if(startCol < BOARD_SIZE - 1 && piece_equal(board_clone[startRow][startCol + 1], &null)) spread_juice(array, startRow, startCol + 1, n);
+}
+
+// once we know which tiles can be accessed immediately, populate remaining tiles with higher integers
+//  thus, the int on each tile minus 1 = the number of pieces needed to be moved out of the way to get here
+//  the next number to work with (e.g. finding tiles that should be n=2)
+void further_spread(int *array, int n, int startRow, int startCol) {
+    bool containsZeros = false;
+    for(int i = 0; i < BOARD_SIZE; i++) for(int j = 0; j < BOARD_SIZE; j++) if(array[i * BOARD_SIZE + j] == 0) containsZeros = true;
+
+    if(containsZeros) {
+        for(int i = 0; i < BOARD_SIZE; i++) for(int j = 0; j < BOARD_SIZE; j++) {
+            if(i == startRow && j == startCol) continue; // don't touch starting square
+            if(array[i * BOARD_SIZE + j] != 0) continue; // this tile has already been calculated
+
+            bool neighbouringAccessPoint = false; // a neighbouring (n - 1) will allow this tile to be a (n)
+            if(i > 0 && array[(i - 1) * BOARD_SIZE + j] == n - 1) neighbouringAccessPoint = true;
+            if(i < BOARD_SIZE - 1 && array[(i + 1) * BOARD_SIZE + j] == n - 1) neighbouringAccessPoint = true;
+            if(j > 0 && array[i * BOARD_SIZE + j - 1] == n - 1) neighbouringAccessPoint = true;
+            if(j < BOARD_SIZE - 1 && array[i * BOARD_SIZE + j + 1] == n - 1) neighbouringAccessPoint = true;
+            if(neighbouringAccessPoint) spread_juice(array, i, j, n); // finds adjacent tiles
+        }
+        further_spread(array, n+1, startRow, startCol); // keep going until no zeros left
+    }
+}
+
+// returns the number of tiles on the path - 1
+int find_path_back(bool *path, int *initial_reach, int *paths, int startRow, int startCol, int destRow, int destCol) {
+    bool visited [BOARD_SIZE][BOARD_SIZE] = {0};
+    int minDists [BOARD_SIZE][BOARD_SIZE];
+    int ref [BOARD_SIZE][BOARD_SIZE]; // points to the tile from which the path came
+    for(int i = 0; i < BOARD_SIZE; i++) for(int j = 0; j < BOARD_SIZE; j++) {
+        minDists[i][j] = 10000;
+        ref[i][j] = -1;
+    }
+
+    minDists[startRow][startCol] = 0;
+    int pq [128]; // custom priority queue LOL
+    pq[0] = startRow * BOARD_SIZE + startCol;
+    visited[startRow][startCol] = true;
+    int *pqStart = pq;
+    int pqLen = 1;
+
+    while(pqLen != 0) {
+        int curRow = pqStart[0] / BOARD_SIZE;
+        int curCol = pqStart[0] % BOARD_SIZE;
+        pqStart++;
+        pqLen--;
+
+        bool curIsPiece = !piece_equal(board_clone[curRow][curCol], &null);
+        //printf("%d %d: set [0][0] to %d\n", curRow, curCol, ref[0][0]);
+
+        int nextRows [4] = {curRow - 1, curRow + 1, curRow, curRow};
+        int nextCols [4] = {curCol, curCol, curCol - 1, curCol + 1};
+        for(int i = 0; i < 4; i++) {
+            if(nextRows[i] < 0 || nextRows[i] >= BOARD_SIZE || nextCols[i] < 0 || nextCols[i] >= BOARD_SIZE) continue; // off the board
+            if(visited[nextRows[i]][nextCols[i]]) continue; // no need to see again
+            // two cases:
+            //      1) the neighbour tile is one lower on the initial reach, meaning we're one step closer
+            //      2) the neighbour tile is the same, but this tile doesn't have a piece (we don't need to descend)
+            if((initial_reach[nextRows[i] * BOARD_SIZE + nextCols[i]] < initial_reach[curRow * BOARD_SIZE + curCol])
+                || (!curIsPiece && initial_reach[nextRows[i] * BOARD_SIZE + nextCols[i]] == initial_reach[curRow * BOARD_SIZE + curCol])) {
+                visited[nextRows[i]][nextCols[i]] = true;
+                minDists[nextRows[i]][nextCols[i]] = minDists[curRow][curCol] + 1;
+                ref[nextRows[i]][nextCols[i]] = curRow * BOARD_SIZE + curCol;
+                pqStart[pqLen] = nextRows[i] * BOARD_SIZE + nextCols[i]; // add to priority queue
+                pqLen++; // accumulate priority queue length
+            }
+        }
+    }
+
+    int trackRow = destRow, trackCol = destCol;
+    int counter = 0;
+    while(ref[trackRow][trackCol] != -1) {
+        paths[counter] = trackRow * BOARD_SIZE + trackCol;
+        path[trackRow * BOARD_SIZE + trackCol] = true;
+        int newTrackRow = ref[trackRow][trackCol] / BOARD_SIZE;
+        trackCol = ref[trackRow][trackCol] % BOARD_SIZE;
+        trackRow = newTrackRow;
+        counter++;
+    }
+    path[startRow * BOARD_SIZE + startCol] = true;
+    paths[counter] = startRow * BOARD_SIZE + startCol;
+    path[destRow * BOARD_SIZE + destCol] = false; // remove the piece that needs to be moved from path
+
+    return minDists[destRow][destCol];
+}
+
+// all values are given in terms of full board dimensions
+// returns the length of the path, excluding the starting piece
+int min_disruption(bool *path, int *paths, int startRow, int startCol, int endRow, int endCol) {
+    int initial_reach [BOARD_SIZE][BOARD_SIZE] = {0};
+    initial_spread(initial_reach, startRow, startCol);
+    further_spread(initial_reach, 2, startRow, startCol);
+    initial_reach[startRow][startCol] = 1;
+
+    /*printf("\n-------initial reach array------\n");
+    for(int i = BOARD_SIZE - 1; i >= 0; i--) {
+        for(int j = 0; j < BOARD_SIZE; j++) {
+            printf("%d ", initial_reach[i][j]);
+        }
+        printf("\n");
+    }*/
+
+    int moves = find_path_back(path, initial_reach, paths, endRow, endCol, startRow, startCol); // go backwards
+    /*printf("\n------path array------- [%d moves] \n", moves);
+    for(int i = BOARD_SIZE - 1; i >= 0; i--) {
+        for(int j = 0; j < BOARD_SIZE; j++) {
+            printf("%d ", path[i * BOARD_SIZE + j]);
+        }
+        printf("\n");
+    }*/
+    return moves;
+}
+
+// calculate closest exits
+void closest_exit(int *pathExitsOrdered, int *closestExits, int length) {
+    for(int i = 1; i < length; i++) closestExits[i] = -1;
+    for(int i = 1; i < length; i++) if(pathExitsOrdered[i] != 0) closestExits[i] = i; // the closest exit is the current tile
+    while(true) {
+        bool flag = true; // whether we can terminate
+        for(int i = 1; i < length; i++) {
+            if(closestExits[i] == -1) { // no exit found yet
+                flag = false;
+                if(i > 1 && closestExits[i - 1] != -1) closestExits[i] = closestExits[i - 1];
+                else if(i < length - 1 && closestExits[i + 1] != -1) closestExits[i] = closestExits[i + 1];
+            }
+        }
+        if(flag) break;
+    }
+
+    /*printf("path exits: ");
+    for(int i = 1; i < length; i++) printf("%d ", pathExitsOrdered[i]);
+    printf("\n");
+
+    printf("closest exits: ");
+    for(int i = 1; i < length; i++) printf("%d ", closestExits[i]);
+    printf("\n");*/
+}
+
+// removes obstacles along the path until there are none left, then moves the main piece, then puts everything back
+// paths: an ordered array of path coordinates, from start to end
+// closestExit: the closest exit to each square on the path, in the order of paths
+// srcRow...destCol: are for the final target piece movement
+// exitDist: distance currently being evacuated, items closest to exit first go first (to ensure no collision)
+//
+// edge case not considered: if there aren't enough exits for all the pieces that need to be evacuated
+void clear_path(bool *path, int *paths, int *pathExitsOrdered, int *closestExit, int length, int srcRow, int srcCol, int destRow, int destCol, int exitDist) {
+    closest_exit(pathExitsOrdered, closestExit, length);
+
+    bool pieceNeedsMove = false;
+    for(int i = 1; i < length; i++) {
+        if(!piece_equal(board_clone[paths[i] / BOARD_SIZE][paths[i] % BOARD_SIZE], &null)) {
+            //printf("need to move the piece at (%d, %d)\n", paths[i] / BOARD_SIZE, paths[i] % BOARD_SIZE);
+            pieceNeedsMove = true;
+            if(abs(closestExit[i] - i) == exitDist) { // exit this item
+                // run direct motor instruct command to move along path tiles one by one until exit is reached
+                // use motor to exit to any valid exit
+
+                // move motor to the piece's starting position, turn on magnet
+                //printf("moving the piece at (%d, %d)...\n", paths[i] / BOARD_SIZE, paths[i] % BOARD_SIZE);
+                motor_move_both(paths[i] / BOARD_SIZE + 0.5f - motorRow, paths[i] % BOARD_SIZE + 0.5f - motorCol, false);
+                toggle_magnet(true);
+
+                int curPathPos = i;
+                while(curPathPos != closestExit[i]) { // move to the exit slot
+                    int nextPathPos = (curPathPos > closestExit ? curPathPos-- : curPathPos++);
+                    motor_move_both((paths[nextPathPos] / BOARD_SIZE) - (paths[curPathPos] / BOARD_SIZE), (paths[nextPathPos] % BOARD_SIZE) - (paths[curPathPos] % BOARD_SIZE), true); // move to next path tile
+                }
+
+                int exitRow = -1, exitCol = -1;
+                int nextRows [4] = {(paths[curPathPos] / BOARD_SIZE) - 1, (paths[curPathPos] / BOARD_SIZE) + 1, (paths[curPathPos] / BOARD_SIZE), (paths[curPathPos] / BOARD_SIZE)};
+                int nextCols [4] = {(paths[curPathPos] % BOARD_SIZE), (paths[curPathPos] % BOARD_SIZE), (paths[curPathPos] % BOARD_SIZE) - 1, (paths[curPathPos] % BOARD_SIZE) + 1};
+                for(int k = 0; k < 4; k++) {
+                    if(nextRows[k] < 0 || nextRows[k] >= BOARD_SIZE || nextCols[k] < 0 || nextCols[k] >= BOARD_SIZE) continue; // off the board
+                    if(path[nextRows[k] * BOARD_SIZE + nextCols[k]]) continue; // still on the path, isn't an exit;
+                    if(piece_equal(board_clone[nextRows[k]][nextCols[k]], &null)) { // exit found
+                        exitRow = nextRows[k];
+                        exitCol = nextCols[k];
+                        break;
+                    }
+                }
+                if(exitRow == -1 || exitCol == -1) printf("WARNING HELP HELP WHAT IS GOING ON?\n");
+
+                motor_move_both(exitRow - (paths[curPathPos] / BOARD_SIZE), exitCol - (paths[curPathPos] % BOARD_SIZE), true); // move the item onto the exit tile
+                toggle_magnet(false); // turn off magnet
+                pathExitsOrdered[curPathPos]--; // one less path here!
+                board_clone[exitRow][exitCol] = board_clone[paths[i] / BOARD_SIZE][paths[i] % BOARD_SIZE]; // change board clone to match
+                board_clone[paths[i] / BOARD_SIZE][paths[i] % BOARD_SIZE] = &null;
+                closest_exit(pathExitsOrdered, closestExit, length); // recalculate closest exits
+
+                // perform recursive call, then move the piece back into original place
+                clear_path(path, paths, pathExitsOrdered, closestExit, length, srcRow, srcCol, destRow, destCol, exitDist);
+
+                // use motor to move the piece back
+                motor_move_both(exitRow + 0.5f - motorRow, exitCol + 0.5f - motorCol, false);
+                toggle_magnet(true);
+                motor_move_both((paths[curPathPos] / BOARD_SIZE) - exitRow, (paths[curPathPos] % BOARD_SIZE) - exitCol, true); // move the piece back onto the path
+                while(curPathPos != i) { // move from exit slot back to original slot
+                    int nextPathPos = (curPathPos > i ? curPathPos-- : curPathPos++);
+                    motor_move_both((paths[nextPathPos] / BOARD_SIZE) - (paths[curPathPos] / BOARD_SIZE), (paths[nextPathPos] % BOARD_SIZE) - (paths[curPathPos] % BOARD_SIZE), true); // move to next path tile
+                }
+                toggle_magnet(false);
+                board_clone[paths[i] / BOARD_SIZE][paths[i] % BOARD_SIZE] = board_clone[exitRow][exitCol]; // change board clone to match
+                board_clone[exitRow][exitCol] = &null;
+                return; // piece has been moved back, so we can return
+            }
+        }
+    }
+    // check if the list is empty, if so run base case (move the actual target piece)
+    // if the list is not empty, increment exitDist and run the function again
+    if(pieceNeedsMove) {
+        // no pieces are able to be moved with given nearest exit length, so we will accumulate it by 1
+        clear_path(path, paths, pathExitsOrdered, closestExit, length, srcRow, srcCol, destRow, destCol, exitDist + 1);
+        return;
+    } else { // base case
+        //printf("BASE CASE REACHED! moving from (%d, %d) to (%d, %d) a distance of %d tiles\n", srcRow, srcCol, destRow, destCol, length);
+        // set up motor to move piece
+        motor_move_both(srcRow + 0.5f - motorRow, srcCol + 0.5f - motorCol, false);
+        toggle_magnet(true);
+
+        for(int curPathPos = 0; curPathPos < length; curPathPos++) {
+            int nextPathPos = curPathPos + 1;
+            motor_move_both((paths[nextPathPos] / BOARD_SIZE) - (paths[curPathPos] / BOARD_SIZE), (paths[nextPathPos] % BOARD_SIZE) - (paths[curPathPos] % BOARD_SIZE), true); // move to next path tile
+        }
+
+        toggle_magnet(false); // WE'RE DONE!
+        return;
+    }
 }
 
 // motor will move a piece from the given src to the given dest
-// direct: whether to go there in a straight line, or perform evasive maneuvers along the lines
+// direct: whether to go there in a straight line, or move obstructing pieces first
+//      note that going between tiles does not work given hardware constraints.
 void motor_instruct(int srcRow, int srcCol, int destRow, int destCol, bool direct) {
-    motor_move_both(srcRow + 0.5f - motorRow, srcCol + 0.5f - motorCol); // move to source position
-    toggle_magnet(true); // turn on electromagnet
-
     if(direct) {
-        motor_move_both(destRow - srcRow, destCol - srcCol); // move at once
+        motor_move_both(srcRow + 0.5f - motorRow, srcCol + 0.5f - motorCol, false); // move to source position
+        toggle_magnet(true); // turn on electromagnet
+        motor_move_both(destRow - srcRow, destCol - srcCol, true); // move at once, as the crow flies
+        toggle_magnet(false); // turn magnet off
     } else { // move along lines
-        motor_move_row(-0.5f); // get off the tile centre
-        motor_move_col(-0.5f);
-        motor_move_row(destRow - srcRow); // move piece
-        motor_move_col(destCol - srcCol);
-        motor_move_row(0.5f); // get back on tile centre
-        motor_move_col(0.5f);
-    }
+        bool path [BOARD_SIZE][BOARD_SIZE] = {0}; // all set to false, set tiles to true when they're on the path
+        int paths [64] = {0}; // ordered list of paths
 
-    toggle_magnet(false); // turn magnet off
+        int length = min_disruption(path, paths, srcRow, srcCol, destRow, destCol); // does min dist calculations, dijkstra's, and draws the final path onto the path array
+
+        int pathExits [BOARD_SIZE][BOARD_SIZE] = {0}; // exits from each tile
+        for(int i = 0; i < BOARD_SIZE; i++) for(int j = 0; j < BOARD_SIZE; j++) {
+            if(path[i][j]) { // on the path
+                int nextRows [4] = {i - 1, i + 1, i, i};
+                int nextCols [4] = {j, j, j - 1, j + 1};
+                for(int k = 0; k < 4; k++) {
+                    if(nextRows[k] < 0 || nextRows[k] >= BOARD_SIZE || nextCols[k] < 0 || nextCols[k] >= BOARD_SIZE) continue; // off the board
+                    if(path[nextRows[k]][nextCols[k]]) continue; // still on the path, isn't an exit
+                    if(piece_equal(board_clone[nextRows[k]][nextCols[k]], &null)) {
+                        pathExits[i][j]++;
+                    }
+                }
+            }
+        }
+
+        /*printf("\n----all paths---- (size: %d)\n", length);
+        for(int i = 0; i < length; i++) printf("%d\n", paths[i]);
+        printf("\n------path exits array-------\n");
+            for(int i = BOARD_SIZE - 1; i >= 0; i--) {
+                for(int j = 0; j < BOARD_SIZE; j++) {
+                    printf("%d ", pathExits[i][j]);
+                }
+            printf("\n");
+        }*/
+        int pathExitsOrdered [BOARD_SIZE * BOARD_SIZE]; // ignore position 0 because it's the start
+        for(int i = 1; i < length; i++) pathExitsOrdered[i] = pathExits[paths[i] / BOARD_SIZE][paths[i] % BOARD_SIZE];
+        int closestExits [BOARD_SIZE * BOARD_SIZE]; // ignore position 0 because it's the start
+
+        clear_path(path, paths, pathExitsOrdered, closestExits, length, srcRow, srcCol, destRow, destCol, 0);
+    }
 }
 
 // pre: rows/cols given WITH BOARD_START added
@@ -568,13 +910,13 @@ bool move_piece(int srcRow, int srcCol, int destRow, int destCol, int turn) {
     struct piece *dest = board[destRow][destCol];
     struct piece *src = board[srcRow][srcCol];
     struct piece *adj = board[srcRow][destCol]; // potential en passant victim
+    clone_board();
 
     // move piece
     board[destRow][destCol] = src;
     board[srcRow][srcCol] = &null;
     if(src->piece_id == pawn && abs(srcRow - destRow) == 1 && abs(srcCol - destCol) == 1) { // diagonal pawn move, is it a capture or en passant?
-        if(piece_equal(dest, &null)) { // no piece on the diaognal, therefore en passant
-            deposit_captured(srcRow, destCol, other_colour(turn), board[srcRow][destCol]); // move pawn off of the board
+        if(piece_equal(dest, &null)) { // no piece on the diagonal, therefore en passant
             board[srcRow][destCol] = &null;
         }
     }
@@ -586,10 +928,16 @@ bool move_piece(int srcRow, int srcCol, int destRow, int destCol, int turn) {
         board[srcRow][destCol] = adj;
         find_kings();
 
-        printf("Not a legal move (your king is/will be under check)! ");
+        print_tts_message("Not a legal move, you will be under check!");
         return false;
     }
 
+    if(src->piece_id == pawn && abs(srcRow - destRow) == 1 && abs(srcCol - destCol) == 1) { // diagonal pawn move, is it a capture or en passant?
+        if(piece_equal(dest, &null)) { // no piece on the diagonal, therefore en passant
+            deposit_captured(srcRow, destCol, other_colour(turn), adj); // move pawn off of the board
+            printf("en passant\n");
+        }
+    }
     if(!piece_equal(dest, &null)) // something was in the dest spot, meaning it was captured
         deposit_captured(destRow, destCol, other_colour(turn), dest);
 
@@ -598,30 +946,28 @@ bool move_piece(int srcRow, int srcCol, int destRow, int destCol, int turn) {
     else enPassantCol[turn] = -1; // reset en passant
 
     if(src->piece_id == pawn && (destRow == BOARD_START || destRow == BOARD_START + 7)) { // prompt promotion
-       printf("Promotion for %s, what piece would you like? (q,r,b,n)\n", (turn == white ? "white" : "black"));
-       char input;
-       do {
-            scanf("%c", &input);
-       } while (!(input == 'q' || input == 'r' || input == 'b' || input == 'n')); // wait until valid input
-
-       switch(input) {
-       case 'q':
-            printf("Promoted to queen!\n");
+        char outputMessage [32] = "Promotion for _____, to ";
+        if(turn == white) strncpy(outputMessage + 14, "white", 5);
+        else strncpy(outputMessage + 14, "black", 5);
+        switch(promote_letter) {
+        case 'q':
+            strcat(outputMessage, "queen");
             board[destRow][destCol] = (turn == white ? &white_queen_p : &black_queen_p);
             break;
-       case 'r':
-            printf("Promoted to rook!\n");
+        case 'r':
+            strcat(outputMessage, "rook");
             board[destRow][destCol] = (turn == white ? &white_rook_p : &black_rook_p);
             break;
-       case 'b':
-            printf("Promoted to bishop!\n");
+        case 'b':
+            strcat(outputMessage, "bishop");
             board[destRow][destCol] = (turn == white ? &white_bishop_p : &black_bishop_p);
             break;
-       case 'n':
-            printf("Promoted to knight!\n");
+        case 'n':
+            strcat(outputMessage, "knight");
             board[destRow][destCol] = (turn == white ? &white_knight_p : &black_knight_p);
             break;
-       }
+        }
+        print_tts_message(outputMessage);
     }
 
     // motor instructions
@@ -645,14 +991,16 @@ bool move_piece(int srcRow, int srcCol, int destRow, int destCol, int turn) {
 // ASSUMES that legality check for castling has already been made
 bool move_castle(int colour, bool kingSide) {
     int targetFile = (colour == white ? 0 : 7);
-    board[BOARD_START + targetFile][BOARD_START + 4] = &null; // remove king
     board[BOARD_START + targetFile][BOARD_START + (kingSide ? 7 : 0)] = &null; // remove rook
-    board[BOARD_START + targetFile][BOARD_START + (kingSide ? 6 : 2)] = (colour == white ? &white_king : &black_king); // reposition king
     board[BOARD_START + targetFile][BOARD_START + (kingSide ? 5 : 3)] = (colour == white ? &white_rook : &black_rook); // reposition rook
+    clone_board(); // clone board after rook is moved, which is always a guaranteed straight line with no interruptions
 
-    // appropriate motor commands
+    board[BOARD_START + targetFile][BOARD_START + 4] = &null; // remove king
+    board[BOARD_START + targetFile][BOARD_START + (kingSide ? 6 : 2)] = (colour == white ? &white_king : &black_king); // reposition king
+
+    // appropriate motor commands (move rook first)
+    motor_instruct(BOARD_START + targetFile, BOARD_START + (kingSide ? 7 : 0), BOARD_START + targetFile, BOARD_START + (kingSide ? 5 : 3), true);
     motor_instruct(BOARD_START + targetFile, BOARD_START + 4, BOARD_START + targetFile, BOARD_START + (kingSide ? 6 : 2), false);
-    motor_instruct(BOARD_START + targetFile, BOARD_START + (kingSide ? 7 : 0), BOARD_START + targetFile, BOARD_START + (kingSide ? 5 : 3), false);
     return true; // always succeeds because legality is presumed to have already been checked
 }
 
@@ -679,21 +1027,15 @@ int analyze_board(int colour) {
     return -1;
 }
 
-void reset_game() {
-    printf("Resetting game...");
-
-    // manual reset for now
-}
-
 // method to be called by python
 void run_chess_algorithm(char* turnInput) {
         char *parsedInput = malloc(sizeof(char) * 10);
         understand(parsedInput, turnInput); // will try to convert input into standardized move notation (for this program, at least)
 
-        printf("TRANSLATED: %s\n", parsedInput);
+        printf("[Message] You said: %s\n", parsedInput);
         if(!validate_input(parsedInput)) return;
         if(!validate_move(parsedInput, turn)) {
-            printf("Not a legal move!\n");
+            print_tts_message("Not a legal move!");
             return;
         }
 
@@ -704,25 +1046,26 @@ void run_chess_algorithm(char* turnInput) {
         // if this code is reached, move completed and uploaded to board
         switch(analyze_board(turn)) {
         case 0: // check
-            printf("check!\n");
+            print_tts_message("Check!");
             break;
         case 1: // checkmate
-            printf(turn == white ? "checkmate, white wins!" : "checkmate, black wins!");
+            print_tts_message(turn == white ? "Checkmate, white wins!" : "Checkmate, black wins!");
             running = false;
             break;
         case 2: // stalemate
-            printf("stalemate");
+            print_tts_message("Stalemate.");
             running = false;
             break;
         }
         print_board();
 
         if(movesTillDraw <= 0) { // 50-move rule
-            printf("50 move rule. Game is tied.");
+            print_tts_message("50 move rule. Game is tied.");
             running = false;
         }
 
         turn = (turn == white ? black : white);
+        promote_letter = 'q'; // reset to promoting to queen
 }
 
 int main(void) { // will have to mirror the main method in python, then call appropriate methods here
@@ -732,13 +1075,12 @@ int main(void) { // will have to mirror the main method in python, then call app
         print_board();
 
         while(running) {
-            printf(turn == white ? "White's turn:\n" : "Black's turn:\n");
+            printf(turn == white ? "[MESSAGE]: White's turn:\n" : "[MESSAGE]: Black's turn:\n");
             char turnInput [50]; // how many letters do you need?
             gets(turnInput);
 
             run_chess_algorithm(turnInput);
         }
-        reset_game();
     }
     return 0;
 }
