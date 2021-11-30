@@ -41,6 +41,7 @@ def prompt_input(currentTurn):
 		time.sleep(0.5)
 	print("You may speak now.")
 
+ 	#command = input()
 	command = from_mic()
 	b_command = command.encode()
 
@@ -50,7 +51,7 @@ def prompt_input(currentTurn):
 	return currentTurn
 
 if __name__ == '__main__':
-	board = pyfirmata.Arduino('/dev/cu.usbmodem143301')
+	board = pyfirmata.Arduino('/dev/cu.usbmodem141301')
 	print("Communication successfully started")
 	board.digital[8].write(0)
 
@@ -108,14 +109,14 @@ if __name__ == '__main__':
 					targetFilePos = round(curFilePos + chess_algorithm.get_float_command_value_a() * unitStep, 0)
 					targetRankPos = round(curRankPos + chess_algorithm.get_float_command_value_b() * unitStep, 0)
 					#print("Target position: (", targetFilePos, ", ", targetRankPos, ")")
-				time.sleep(2)
+				#time.sleep(0.2)
 			else: #prompt input
 				currentTurn = prompt_input(currentTurn)
 		else: #configure hardware to reach target states
 			if(targetMagnetState != curMagnetState): #toggle magnet
 				curMagnetState = targetMagnetState
 				board.digital[electromagnet].write(curMagnetState)
-				time.sleep(8)
+				time.sleep(2)
 			else: #move motors
 				#print(curFilePos, " -> ", targetFilePos, " & ", curRankPos, " -> ", targetRankPos)
 				if(curFilePos != targetFilePos): #move motors that control file
@@ -125,7 +126,7 @@ if __name__ == '__main__':
 				if(curRankPos != targetRankPos):
 					board.digital[motorYStep].write(1)
 					curRankPos += (1 if targetRankPos > curRankPos else -1)
-				time.sleep(0.003 if curMagnetState == 1 else 0.0001)
+				time.sleep(0.0015 if curMagnetState == 1 else 0.0001)
 	
 				board.digital[motorXStep].write(0)
 				board.digital[motorYStep].write(0)

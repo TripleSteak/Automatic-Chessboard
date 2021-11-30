@@ -72,9 +72,8 @@ bool aRookMoved [2];
 bool hRookMoved [2];
 
 // motor position:
-// (0,0) represents the A1 corner of the ENTIRE board
-// (13, 13) represents the H8 corner of the ENTIRE board
-// values of .5 are tile centres
+// (0,0) represents the bottom left corner (beyond A1)
+// (9,9) represents the top right corner (beyond H8)
 float motorRow = 0, motorCol = 0;
 
 // counter, reset every time a pawn is moved or a piece is captured (at 0 will force draw)
@@ -775,7 +774,7 @@ void clear_path(bool *path, int *paths, int *pathExitsOrdered, int *closestExit,
 
                 // move motor to the piece's starting position, turn on magnet
                 //printf("moving the piece at (%d, %d)...\n", paths[i] / BOARD_SIZE, paths[i] % BOARD_SIZE);
-                motor_move_both(paths[i] / BOARD_SIZE + 0.5f - motorRow, paths[i] % BOARD_SIZE + 0.5f - motorCol, false);
+                motor_move_both(paths[i] / BOARD_SIZE - motorRow, paths[i] % BOARD_SIZE - motorCol, false);
                 toggle_magnet(true);
 
                 int curPathPos = i;
@@ -809,7 +808,7 @@ void clear_path(bool *path, int *paths, int *pathExitsOrdered, int *closestExit,
                 clear_path(path, paths, pathExitsOrdered, closestExit, length, srcRow, srcCol, destRow, destCol, exitDist);
 
                 // use motor to move the piece back
-                motor_move_both(exitRow + 0.5f - motorRow, exitCol + 0.5f - motorCol, false);
+                motor_move_both(exitRow - motorRow, exitCol - motorCol, false);
                 toggle_magnet(true);
                 motor_move_both((paths[curPathPos] / BOARD_SIZE) - exitRow, (paths[curPathPos] % BOARD_SIZE) - exitCol, true); // move the piece back onto the path
                 while(curPathPos != i) { // move from exit slot back to original slot
@@ -832,7 +831,7 @@ void clear_path(bool *path, int *paths, int *pathExitsOrdered, int *closestExit,
     } else { // base case
         //printf("BASE CASE REACHED! moving from (%d, %d) to (%d, %d) a distance of %d tiles\n", srcRow, srcCol, destRow, destCol, length);
         // set up motor to move piece
-        motor_move_both(srcRow + 0.5f - motorRow, srcCol + 0.5f - motorCol, false);
+        motor_move_both(srcRow - motorRow, srcCol - motorCol, false);
         toggle_magnet(true);
 
         for(int curPathPos = 0; curPathPos < length; curPathPos++) {
@@ -850,7 +849,7 @@ void clear_path(bool *path, int *paths, int *pathExitsOrdered, int *closestExit,
 //      note that going between tiles does not work given hardware constraints.
 void motor_instruct(int srcRow, int srcCol, int destRow, int destCol, bool direct) {
     if(direct) {
-        motor_move_both(srcRow + 0.5f - motorRow, srcCol + 0.5f - motorCol, false); // move to source position
+        motor_move_both(srcRow - motorRow, srcCol - motorCol, false); // move to source position
         toggle_magnet(true); // turn on electromagnet
         motor_move_both(destRow - srcRow, destCol - srcCol, true); // move at once, as the crow flies
         toggle_magnet(false); // turn magnet off
