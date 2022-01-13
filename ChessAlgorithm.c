@@ -73,7 +73,7 @@ bool hRookMoved [2];
 
 // motor position:
 // (0,0) represents the bottom left corner (beyond A1)
-// (9,9) represents the top right corner (beyond H8)
+// (10 * tileSize + 10 * tileSize) represents the top right corner (beyond H8)
 float motorRow = 0, motorCol = 0;
 
 // counter, reset every time a pawn is moved or a piece is captured (at 0 will force draw)
@@ -238,6 +238,11 @@ void init_board() {
 
     turn = white; // white starts
     running = true; // start the game
+
+    // moves motors into place (ensure it's in the corner)
+    motor_move_both(-50, -50);
+    motor_row = 0;
+    motor_col = 0;
 }
 
 // lowercase for white, capital for black
@@ -292,6 +297,8 @@ void understand(char *parsed, char *input) {
     //strcpy(parsed, input);
     char *pieceToMove = min_pointer(strstr(input, "pawn"), strstr(input, "pine"));
     pieceToMove = min_pointer(strstr(input, "pond"), pieceToMove); // point to the keyword that represents the first piece mentioned in the input
+    pieceToMove = min_pointer(strstr(input, "pain"), pieceToMove);
+    pieceToMove = min_pointer(strstr(input, "paun"), pieceToMove);
     pieceToMove = min_pointer(strstr(input, "night"), pieceToMove);
     pieceToMove = min_pointer(strstr(input, "horse"), pieceToMove);
     pieceToMove = min_pointer(strstr(input, "bishop"), pieceToMove);
@@ -322,7 +329,7 @@ void understand(char *parsed, char *input) {
             else if(numberIndexCnt < totalIndexCnt && (prefix("3", input + i) || prefix("three", input + i))) numberIndices[numberIndexCnt++] = 3;
             else if(numberIndexCnt < totalIndexCnt && (prefix("4", input + i) || prefix("four", input + i) || prefix("for", input + i))) numberIndices[numberIndexCnt++] = 4;
             else if(numberIndexCnt < totalIndexCnt && (prefix("5", input + i) || prefix("five", input + i))) numberIndices[numberIndexCnt++] = 5;
-            else if(numberIndexCnt < totalIndexCnt && (prefix("6", input + i) || prefix("six", input + i))) numberIndices[numberIndexCnt++] = 6;
+            else if(numberIndexCnt < totalIndexCnt && (prefix("6", input + i) || prefix("six", input + i) || prefix("stick", input + i))) numberIndices[numberIndexCnt++] = 6;
             else if(numberIndexCnt < totalIndexCnt && (prefix("7", input + i) || prefix("seven", input + i))) numberIndices[numberIndexCnt++] = 7;
             else if(numberIndexCnt < totalIndexCnt && (prefix("8", input + i) || prefix("eight", input + i) || prefix("ate", input + i))) numberIndices[numberIndexCnt++] = 8;
         }
@@ -359,7 +366,7 @@ bool validate_input(char *input) {
     bool flag;
     if(strlen(input) < 5) flag = false;
     else flag = is_piece_letter(input[0]) && is_rank(input[1]) && is_file(input[2]) && is_rank(input[3]) && is_file(input[4]);
-    if(!flag) print_tts_message("Invalid input. Try again. ");
+    //if(!flag) print_tts_message("Invalid input. Try again. ");
     return flag;
 }
 
@@ -570,16 +577,20 @@ void motor_move_both(float deltaX, float deltaY, bool withOverflow) {
     /*if(withOverflow) {
     float distNoOverflow = sqrt(deltaX * deltaX + deltaY * deltaY);
     float overflowPercent = (distNoOverflow + motor_overflow) / distNoOverflow - 1.0f; // should be a low percentage (0 - 30%)?
-
     float motorOverflowX = overflowPercent * deltaX;
     float motorOverflowY = overflowPercent * deltaY;
     queue_command(both_motor_axis, 0, deltaX + motorOverflowX, deltaY + motorOverflowY);
     queue_command(both_motor_axis, 0, -motorOverflowX, -motorOverflowY);
     //printf("%f %f\n", (deltaX + motorOverflowX), (deltaY + motorOverflowY));
-
     } elseI*/ queue_command(both_motor_axis, 0, deltaX, deltaY);
 
     printf("[DEBUG] $MOTOR$ moved in two axes: %f, %f tiles\n", deltaX, deltaY);
+}
+
+// our motors aren't good enough, so we'll recalibrate the motor in between movements (call at the end of command chain)
+void motor_reset() {
+    if(motorRow != 0 || motorCol != 0)
+        motor_move_both(-motorRow, -motorCol, false);
 }
 
 // turns the magnet on/off
@@ -747,7 +758,6 @@ void closest_exit(int *pathExitsOrdered, int *closestExits, int length) {
     /*printf("path exits: ");
     for(int i = 1; i < length; i++) printf("%d ", pathExitsOrdered[i]);
     printf("\n");
-
     printf("closest exits: ");
     for(int i = 1; i < length; i++) printf("%d ", closestExits[i]);
     printf("\n");*/
