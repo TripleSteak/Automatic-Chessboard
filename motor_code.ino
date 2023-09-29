@@ -28,9 +28,9 @@ void setup()
 void loop()
 {
   
-  digitalWrite(motorXDir, HIGH); //downwards -> LOW
-  digitalWrite(motorYDir, LOW); //left -> HIGH
-  digitalWrite(motorZDir, LOW); //downwards -> HIGH
+  digitalWrite(motorXDir, HIGH); // downwards -> LOW
+  digitalWrite(motorYDir, LOW); // left -> HIGH
+  digitalWrite(motorZDir, LOW); // downwards -> HIGH
   digitalWrite(motorADir, HIGH);
 
   for (int i = 0; i < 10000; i++)
@@ -39,8 +39,6 @@ void loop()
     digitalWrite(motorYStep, HIGH);
     digitalWrite(motorZStep, HIGH);
     digitalWrite(motorAStep, HIGH);
-
-    //delay(1);
 
     digitalWrite(motorXStep, LOW);
     digitalWrite(motorYStep, LOW);

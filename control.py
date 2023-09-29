@@ -1,7 +1,7 @@
 from ctypes import *
 import ctypes
 
-so_file = "ChessAlgorithm.so"
+so_file = "chess_algorithm.so"
 
 chess_algorithm = CDLL(so_file)
 chess_algorithm.run_chess_algorithm.argtypes = c_char_p,
