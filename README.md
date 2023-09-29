@@ -1,4 +1,10 @@
-# TheBoardwalkers
-We worked on an automated chess board that could move chess pieces on command. Our project employed an Arduino Uno with three stepper-motors to implement two-dimensional linear motion that propagated an electromagnet which moved chess pieces on voice command. A chess algorithm was programmed that worked in integration with the voice-recognition and speech-to-text code to move the right chess piece precisely to its desired destination. In a nutshell, our project is Wizard’s Chess without the magic.
+# Automated-Chessboard
+**Built:** October 2021 – November 2021
 
-Take a glance at the [underlying workings](https://youtu.be/oQjuFTfWiOE)!
+Welcome to our **Automated Chessboard**, a physical chessboard that's capable of playing out a game of chess using just vocal commands! In a few days, we hammered together an electromagnet, some stepper motors, a couple of wooden boards, and an Arduino Uno. In a nutshell, our project is Wizard’s Chess without the magic. Take a glance at the [underlying workings](https://youtu.be/oQjuFTfWiOE)!
+
+## Features 
+- Hands-free movement of 32 physical chess pieces, made possible with an electromagnet propagated by a motor-driven, two-dimensional linear motion system;
+- Complex motor instruction algorithm used to navigate pieces around the chessboard (and around other pieces);
+- Move checking and validation system to ensure that chess rules were being followed throughout each game; and
+- Voice-recognition and speech-to-text system to parse player voice commands and announce updates to the game state.
