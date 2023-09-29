@@ -8,3 +8,5 @@ Welcome to our **Automated Chessboard**, a physical chessboard that's capable of
 - Complex motor instruction algorithm used to navigate pieces around the chessboard (and around other pieces);
 - Move checking and validation system to ensure that chess rules were being followed throughout each game; and
 - Voice-recognition and speech-to-text system to parse player voice commands and announce updates to the game state.
+
+![Untitled-2](https://github.com/TripleSteak/Automated-Chessboard/assets/24597462/830115b4-3159-477b-8b00-59ae1b8c0afe)
